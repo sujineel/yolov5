@@ -28,6 +28,33 @@ from utils.general import apply_classifier, check_img_size, check_imshow, check_
 from utils.plots import Annotator, colors
 from utils.torch_utils import load_classifier, select_device, time_sync
 
+def calculate_total_ratio(coordinate, img_size):
+    obj_sum = set()
+
+    for x1, y1, x2, y2 in coordinate:
+        for y in range(y1, y2):
+            for x in range(x1, x2):
+                obj_sum.add((x, y))
+
+    imgsz = img_size[0] * img_size[1]
+    ratio = round((len(obj_sum) / imgsz) * 100, 2)
+
+    print(f"Total ratio: {ratio}\n")
+    return ratio
+
+def calculate_width_ratio(coordinate, img_size):
+    obj_sum = set()
+
+    for x1, y1, x2, y2 in coordinate:
+        for x in range(x1, x2):
+            obj_sum.add(x)
+
+    print(img_size)
+    imgsz = int(img_size[0])
+
+    ratio = round((len(obj_sum) / imgsz) * 100, 2)
+    print(f"Width ratio is {ratio}\n\n")
+    return ratio
 
 @torch.no_grad()
 def run(weights='yolov5s.pt',  # model.pt path(s)
@@ -36,9 +63,9 @@ def run(weights='yolov5s.pt',  # model.pt path(s)
         conf_thres=0.25,  # confidence threshold
         iou_thres=0.45,  # NMS IOU threshold
         max_det=1000,  # maximum detections per image
-        device='',  # cuda device, i.e. 0 or 0,1,2,3 or cpu
-        view_img=False,  # show results
-        save_txt=False,  # save results to *.txt
+        device='0',  # cuda device, i.e. 0 or 0,1,2,3 or cpu
+        view_img=True,  # show results
+        save_txt=True,  # save results to *.txt
         save_conf=False,  # save confidences in --save-txt labels
         save_crop=False,  # save cropped prediction boxes
         nosave=False,  # do not save images/videos
@@ -62,6 +89,8 @@ def run(weights='yolov5s.pt',  # model.pt path(s)
     # Directories
     save_dir = increment_path(Path(project) / name, exist_ok=exist_ok)  # increment run
     (save_dir / 'labels' if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
+
+    file = open(str(save_dir)+'/result.txt', "w")
 
     # Initialize
     set_logging()
@@ -126,6 +155,7 @@ def run(weights='yolov5s.pt',  # model.pt path(s)
         model(torch.zeros(1, 3, *imgsz).to(device).type_as(next(model.parameters())))  # run once
     dt, seen = [0.0, 0.0, 0.0], 0
     for path, img, im0s, vid_cap in dataset:
+
         t1 = time_sync()
         if onnx:
             img = img.astype('float32')
@@ -184,10 +214,22 @@ def run(weights='yolov5s.pt',  # model.pt path(s)
             else:
                 p, s, im0, frame = path, '', im0s.copy(), getattr(dataset, 'frame', 0)
 
+            # print(f"file name is {p[15:]}")
+            file.write(f"File name: {p[15:]}\n")
+
+
+            # print(f"im0 is {im0.shape}\n\n")
+
             p = Path(p)  # to Path
             save_path = str(save_dir / p.name)  # img.jpg
             txt_path = str(save_dir / 'labels' / p.stem) + ('' if dataset.mode == 'image' else f'_{frame}')  # img.txt
-            s += '%gx%g ' % img.shape[2:]  # print string
+            # s += '%gx%g ' % img.shape[2:]  # print string
+
+            img_size = []
+            img_size.append(im0.shape[1])# width
+            img_size.append(im0.shape[0])# height
+            file.write(f"Resolution: {img_size[0]}x{img_size[1]}\n")
+
             gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
             imc = im0.copy() if save_crop else im0  # for save_crop
             annotator = Annotator(im0, line_width=line_thickness, pil=not ascii)
@@ -200,23 +242,48 @@ def run(weights='yolov5s.pt',  # model.pt path(s)
                     n = (det[:, -1] == c).sum()  # detections per class
                     s += f"{n} {names[int(c)]}{'s' * (n > 1)}, "  # add to string
 
+                print(len(det)) # 물체 갯수
+                file.write(f"Detected object number: {len(det)}\n")
+                file.write(f"{s}\n")
+                cnt = 0
+
                 # Write results
-                for *xyxy, conf, cls in reversed(det):
+                coor = [[] for _ in range(len(det))]
+                for *xyxy, conf, cls in reversed(det):# 인식된 객체 갯수
+                    coor[cnt].append(int(xyxy[0]))
+                    coor[cnt].append(int(xyxy[1]))
+                    coor[cnt].append(int(xyxy[2]))
+                    coor[cnt].append(int(xyxy[3]))
+                    cnt += 1
+
                     if save_txt:  # Write to file
                         xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
                         line = (cls, *xywh, conf) if save_conf else (cls, *xywh)  # label format
                         with open(txt_path + '.txt', 'a') as f:
                             f.write(('%g ' * len(line)).rstrip() % line + '\n')
 
+
+
                     if save_img or save_crop or view_img:  # Add bbox to image
                         c = int(cls)  # integer class
                         label = None if hide_labels else (names[c] if hide_conf else f'{names[c]} {conf:.2f}')
                         annotator.box_label(xyxy, label, color=colors(c, True))
+                        # print(f"xyxy is {xyxy}\n\n") #왼쪽 위 xy, 오른쪽 아래 xy였던 것 같다.
+
                         if save_crop:
                             save_one_box(xyxy, imc, file=save_dir / 'crops' / names[c] / f'{p.stem}.jpg', BGR=True)
 
+                total_ratio = calculate_total_ratio(coor, img_size)
+                width_ratio = calculate_width_ratio(coor, img_size)
+                file.write(f"Image total ratio: {total_ratio}\n")
+                file.write(f"Image width ratio: {width_ratio}\n\n")
+
+            else:
+                file.write(f"\n\n")
+
             # Print time (inference-only)
             print(f'{s}Done. ({t3 - t2:.3f}s)')
+
 
             # Stream results
             im0 = annotator.result()
@@ -251,6 +318,8 @@ def run(weights='yolov5s.pt',  # model.pt path(s)
         print(f"Results saved to {colorstr('bold', save_dir)}{s}")
     if update:
         strip_optimizer(weights)  # update model (to fix SourceChangeWarning)
+
+    file.close()
 
 
 def parse_opt():
