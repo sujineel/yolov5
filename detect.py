@@ -28,7 +28,49 @@ from utils.general import apply_classifier, check_img_size, check_imshow, check_
 from utils.plots import Annotator, colors
 from utils.torch_utils import load_classifier, select_device, time_sync
 
+def T2_calculate_total_ratio_and_num(coordinate, img_size, label):
+    obj_sum = set()  # T2내의 개체 비율
+    print("img_size: ", img_size)
+    T2_x_start = img_size[0] * (1/3)  # img_size[0]: width
+    print("T2 x start", T2_x_start)
+    T2_x_end = (img_size[0] * (2/3)) - 1
+    print("T2 x end", T2_x_end)
+
+    obj_cnt = 0  # T2내의 개체 수
+    flag = 0
+    idx = 0
+
+    imgsz = img_size[0] * img_size[1]
+    T2_size = (T2_x_end-T2_x_start) * img_size[1]
+    for x1, y1, x2, y2 in coordinate:
+        print(x1, x2, label[idx])
+        each_obj_sum = set()
+        for y in range(y1, y2):
+            for x in range(x1, x2):
+                if x >= T2_x_start and x <= T2_x_end:
+                    each_obj_sum.add((x, y))  # T2 내의 개체 비율
+                    flag = 1
+        if flag == 1:  # flag 1이면 T2내의 개체가 일부 탐지됨을 의미.
+            each_T2_ratio = round((len(each_obj_sum) / T2_size) * 100, 2)
+            print("each_T2_ratio: " ,each_T2_ratio)
+            if  each_T2_ratio>= 50: #개체가 T2 구간에서 50% 이상일 경우 객체 수 count & 객체 비율 더하기
+                obj_cnt= obj_cnt + 1
+                print(label[idx])
+                obj_sum |= each_obj_sum
+            flag = 0
+            idx = idx + 1
+        else:
+            idx = idx + 1
+
+
+    ratio = round((len(obj_sum) / imgsz) * 100, 2)
+
+    print(f"T2 obj_cnt: {obj_cnt}\n")
+    print(f"T2 ratio: {ratio}\n")
+    return obj_cnt, ratio
+
 def calculate_total_ratio(coordinate, img_size):
+
     obj_sum = set()
 
     for x1, y1, x2, y2 in coordinate:
@@ -49,7 +91,7 @@ def calculate_width_ratio(coordinate, img_size):
         for x in range(x1, x2):
             obj_sum.add(x)
 
-    print(img_size)
+
     imgsz = int(img_size[0])
 
     ratio = round((len(obj_sum) / imgsz) * 100, 2)
@@ -246,7 +288,7 @@ def run(weights='yolov5s.pt',  # model.pt path(s)
                 file.write(f"Detected object number: {len(det)}\n")
                 file.write(f"{s}\n")
                 cnt = 0
-
+                label_list = []
                 # Write results
                 coor = [[] for _ in range(len(det))]
                 for *xyxy, conf, cls in reversed(det):# 인식된 객체 갯수
@@ -267,16 +309,20 @@ def run(weights='yolov5s.pt',  # model.pt path(s)
                     if save_img or save_crop or view_img:  # Add bbox to image
                         c = int(cls)  # integer class
                         label = None if hide_labels else (names[c] if hide_conf else f'{names[c]} {conf:.2f}')
+                        label_list.append(label)
                         annotator.box_label(xyxy, label, color=colors(c, True))
+                        # print(label)
                         # print(f"xyxy is {xyxy}\n\n") #왼쪽 위 xy, 오른쪽 아래 xy였던 것 같다.
-
+                        # print(xyxy[0], xyxy[1], xyxy[2],xyxy[3])
                         if save_crop:
                             save_one_box(xyxy, imc, file=save_dir / 'crops' / names[c] / f'{p.stem}.jpg', BGR=True)
 
                 total_ratio = calculate_total_ratio(coor, img_size)
                 width_ratio = calculate_width_ratio(coor, img_size)
+                cnt, ratio = T2_calculate_total_ratio_and_num(coor, img_size, label_list)
                 file.write(f"Image total ratio: {total_ratio}\n")
                 file.write(f"Image width ratio: {width_ratio}\n\n")
+
 
             else:
                 file.write(f"\n\n")
